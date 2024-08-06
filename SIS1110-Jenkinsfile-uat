@@ -1,0 +1,79 @@
+pipeline {
+    agent any
+    // global env variables
+    environment {
+
+        EMAIL_RECIPIENTS = 'sean@sparxitsolutions.com'
+        PROJECT_CODE = 'SIS1110-dev-master'
+        PROJECT_SRC = './'
+        SONAR_HOST = 'https://sonar.devsparxit.com'
+    }
+    stages {
+    stage('Code Review') {
+
+            environment {
+
+                scannerHome = tool 'SonarQubeScanner'
+            }
+            steps {
+                
+                withCredentials([string(credentialsId: 'sonar-token', variable: 'LOGIN')]) {
+                    
+                    sh "${scannerHome}/bin/sonar-scanner -Dsonar.scm.disabled=false -Dsonar.projectKey=${PROJECT_CODE} -Dsonar.sourceEncoding=UTF-8 -Dsonar.sources=${PROJECT_SRC} -Dsonar.host.url=${SONAR_HOST} -Dsonar.login=${LOGIN}"
+                }   
+
+                sh 'sleep 60'
+            }
+        }
+
+    stage('Quality Gate') {
+
+            steps {
+
+                script{
+
+                    echo 'Checking Quality Gate...'
+
+                    withCredentials([usernamePassword(credentialsId: 'sonaruser', usernameVariable: 'SONAR_USER', passwordVariable: 'SONAR_PASS')]) {
+
+                        SONAR_STATUS = sh (
+                            script: 'node -pe "JSON.parse(process.argv[1]).projectStatus.status" "$(curl -u ${SONAR_USER}:${SONAR_PASS} -s ${SONAR_HOST}/api/qualitygates/project_status?projectKey=${PROJECT_CODE})"',
+                            returnStdout: true
+                        ).trim()
+
+                        if(SONAR_STATUS != 'OK') {
+                            error "Pipeline aborted due to quality gate failure."
+                        }
+                    }                    
+                }
+            }
+        }
+    stage('Code Upload') {
+
+            steps {
+
+                withCredentials([usernamePassword(credentialsId: '1437e8c8-192f-4c9c-8cc4-bff726b3e919', usernameVariable: 'DEVUSER', passwordVariable: 'DEVPASS')]) {
+                    sh 'echo Deploying....'
+                    sh 'git config git-ftp.url "ftp://10.0.3.4/SIS1110"'
+                    sh 'git config git-ftp.user ${DEVUSER}'
+                    sh 'git config git-ftp.password ${DEVPASS}'
+                    sh '/usr/local/bin/git-ftp push'
+                }
+            }
+        }
+    }
+    post {
+        always {
+            echo 'Post always';
+        }
+        success {
+            echo 'send success mail';
+        }
+        unstable {
+            echo 'send unstable mail';
+        }
+        failure {
+            echo 'send failure mail';
+        }
+    }
+}

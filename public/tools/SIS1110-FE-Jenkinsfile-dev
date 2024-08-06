@@ -1,0 +1,79 @@
+pipeline {
+    agent any
+    // global env variables
+    environment {
+
+        EMAIL_RECIPIENTS = 'sean@sparxitsolutions.com'
+        PROJECT_CODE = 'SIS1110-FE-dev-master'
+        PROJECT_SRC = './'
+        SONAR_HOST = 'https://sonar.devsparxit.com'
+    }
+    stages {
+              stage('Code Upload') {
+
+            steps {
+
+                withCredentials([usernamePassword(credentialsId: 'f5364b10-1009-4dff-b0f2-3be5a016f19b', usernameVariable: 'DEVUSER', passwordVariable: 'DEVPASS')]) {
+                    sh 'echo Deploying....'
+                    sh 'git config git-ftp.url "ftp://10.0.2.43:21/SIS1110-FE"'
+                    sh 'git config git-ftp.user ${DEVUSER}'
+                    sh 'git config git-ftp.password ${DEVPASS}'
+                    sh '/usr/local/bin/git-ftp push'
+                }
+            }
+        }  
+    stage('Code Review') {
+
+            environment {
+
+                scannerHome = tool 'SonarQubeScanner'
+            }
+            steps {
+                
+                withCredentials([string(credentialsId: 'sonar-token', variable: 'LOGIN')]) {
+                    
+                    sh "${scannerHome}/bin/sonar-scanner -Dsonar.scm.disabled=false -Dsonar.projectKey=${PROJECT_CODE} -Dsonar.sourceEncoding=UTF-8 -Dsonar.sources=${PROJECT_SRC} -Dsonar.host.url=${SONAR_HOST} -Dsonar.login=${LOGIN}"
+                }   
+
+                sh 'sleep 60'
+            }
+        }
+
+    stage('Quality Gate') {
+
+            steps {
+
+                script{
+
+                    echo 'Checking Quality Gate...'
+
+                    withCredentials([usernamePassword(credentialsId: 'sonaruser', usernameVariable: 'SONAR_USER', passwordVariable: 'SONAR_PASS')]) {
+
+                        SONAR_STATUS = sh (
+                            script: 'node -pe "JSON.parse(process.argv[1]).projectStatus.status" "$(curl -u ${SONAR_USER}:${SONAR_PASS} -s ${SONAR_HOST}/api/qualitygates/project_status?projectKey=${PROJECT_CODE})"',
+                            returnStdout: true
+                        ).trim()
+
+                        if(SONAR_STATUS != 'OK') {
+                            error "Pipeline aborted due to quality gate failure."
+                        }
+                    }                    
+                }
+            }
+        }
+    }
+    post {
+        always {
+            echo 'Post always';
+        }
+        success {
+            echo 'send success mail';
+        }
+        unstable {
+            echo 'send unstable mail';
+        }
+        failure {
+            echo 'send failure mail';
+        }
+    }
+}
